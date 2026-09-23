@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Personal Agent Hub v2</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="chat-pane">
+        <header class="topbar">
+          <div>
+            <h1>Personal Agent Hub v2</h1>
+            <p>Agent Runtime Control Plane</p>
+          </div>
+          <span id="run-status" class="status idle">idle</span>
+        </header>
+
+        <div id="messages" class="messages"></div>
+
+        <form id="chat-form" class="composer">
+          <textarea
+            id="chat-input"
+            rows="3"
+            placeholder="Ask the agent to calculate, read/search workspace files, or trigger approval_demo..."
+          ></textarea>
+          <button type="submit">Send</button>
+        </form>
+      </section>
+
+      <section class="control-pane">
+        <nav class="tabs">
+          <button class="tab active" data-tab="trace">Trace</button>
+          <button class="tab" data-tab="memory">Memory</button>
+          <button class="tab" data-tab="approvals">Approvals</button>
+          <button class="tab" data-tab="tools">Tools</button>
+        </nav>
+
+        <section id="trace" class="panel active">
+          <div class="panel-head">
+            <h2>Trace</h2>
+            <button id="refresh-trace">Refresh</button>
+          </div>
+          <div id="trace-list" class="event-list"></div>
+        </section>
+
+        <section id="memory" class="panel">
+          <div class="panel-head">
+            <h2>Memory</h2>
+            <button id="refresh-memory">Refresh</button>
+          </div>
+          <div id="memory-list" class="table-list"></div>
+        </section>
+
+        <section id="approvals" class="panel">
+          <div class="panel-head">
+            <h2>Approvals</h2>
+            <button id="refresh-approvals">Refresh</button>
+          </div>
+          <div id="approval-list" class="table-list"></div>
+        </section>
+
+        <section id="tools" class="panel">
+          <div class="panel-head">
+            <h2>Tools</h2>
+            <button id="refresh-tools">Refresh</button>
+          </div>
+          <div id="tool-list" class="table-list"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
