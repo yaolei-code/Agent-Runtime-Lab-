@@ -14,7 +14,7 @@ Personal Agent Hub v2 is a lightweight Agent Runtime / Harness. It is not a norm
 - Long-term memory store and portable retrieval boundary
 - Structured trace events per run
 - Run list/detail API for inspecting historical executions
-- FastAPI API and built-in Web UI
+- FastAPI API and built-in Web UI with Chat, Runs, Trace Timeline, Memory, Approvals, and Tools views
 - Dockerfile for deployment
 
 ## Architecture
@@ -115,6 +115,8 @@ Trace events are structured rows, not logs. Events include:
 - `memory_written`
 - `run_completed`
 - `run_failed`
+
+The Web UI renders these events as a per-run timeline and keeps the raw event payload available under each event for debugging.
 
 ## Security Boundary
 

@@ -72,6 +72,7 @@ function handleRunResult(result) {
     addMessage("assistant", result.answer);
   }
   renderTrace(result.trace || []);
+  loadRun(result.run_id).catch((error) => console.error(error));
   refreshRuns();
   refreshMemory();
 }
@@ -97,10 +98,104 @@ document.querySelector("#refresh-tools").addEventListener("click", refreshTools)
 
 async function refreshTrace() {
   if (!state.currentRunId) {
+    renderRunDetail(null);
     renderTrace([]);
     return;
   }
-  renderTrace(await api(`/traces/${state.currentRunId}`));
+  await loadRun(state.currentRunId);
+}
+
+function renderRunDetail(detail) {
+  const container = document.querySelector("#run-detail");
+  if (!detail) {
+    container.className = "run-detail empty";
+    container.textContent = "No run selected.";
+    return;
+  }
+
+  const pendingApproval = detail.pending_approval
+    ? `${detail.pending_approval.approval_id} (${detail.pending_approval.status})`
+    : "None";
+
+  container.className = "run-detail";
+  container.innerHTML = `
+    <div class="run-detail-head">
+      <div>
+        <div class="label">run_id</div>
+        <strong>${escapeHtml(detail.run_id)}</strong>
+      </div>
+      <span class="status ${escapeHtml(detail.status)}">${escapeHtml(detail.status)}</span>
+    </div>
+    <div class="detail-grid">
+      <div class="label">input</div><div>${escapeHtml(detail.user_input)}</div>
+      <div class="label">answer</div><div>${escapeHtml(detail.answer || "")}</div>
+      <div class="label">steps</div><div>${escapeHtml(detail.steps)}</div>
+      <div class="label">pending_approval</div><div>${escapeHtml(pendingApproval)}</div>
+      <div class="label">created_at</div><div>${escapeHtml(detail.created_at)}</div>
+    </div>`;
+}
+
+async function loadRun(runId, options = {}) {
+  const detail = await api(`/runs/${runId}`);
+  state.currentRunId = detail.run_id;
+  setStatus(detail.status);
+  renderRunDetail(detail);
+  renderTrace(await api(`/traces/${detail.run_id}`));
+  if (options.switchToTrace) {
+    switchTab("trace");
+  }
+  refreshRuns();
+}
+
+function eventTitle(type) {
+  return String(type || "event")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function eventTone(event) {
+  const type = String(event.type || "");
+  if (type.includes("failed") || type.includes("error")) return "error";
+  if (type.includes("approval")) return "approval";
+  if (type.includes("tool")) return "tool";
+  if (type.includes("llm")) return "llm";
+  if (type.includes("memory")) return "memory";
+  if (type.includes("completed") || type.includes("final")) return "final";
+  return "default";
+}
+
+function eventSummary(event) {
+  const payload = event.payload || {};
+  switch (event.type) {
+    case "run_started":
+      return `Input: ${payload.user_input || ""}`;
+    case "memory_retrieved":
+      return `${payload.count ?? 0} memories retrieved`;
+    case "llm_request":
+      return `Sent ${payload.message_count ?? 0} messages with ${payload.tool_count ?? 0} tools`;
+    case "llm_response":
+      return `Model action: ${payload.action || "unknown"}`;
+    case "tool_requested":
+      return `${payload.tool_name || "tool"} ${JSON.stringify(payload.arguments || {})}`;
+    case "tool_started":
+      return `${payload.tool_name || "tool"} started`;
+    case "tool_completed":
+      return `${payload.tool_name || "tool"} returned ${JSON.stringify(payload.result)}`;
+    case "tool_failed":
+      return `${payload.tool_name || "tool"} failed: ${payload.error || payload.reason || ""}`;
+    case "approval_requested":
+      return `${payload.tool_name || "tool"} requires approval (${payload.risk_level || "unknown"})`;
+    case "approval_resolved":
+      return `${payload.tool_name || "tool"} ${payload.status || "resolved"}`;
+    case "memory_written":
+      return `Memory written: ${payload.memory_id || ""}`;
+    case "run_completed":
+      return `Answer: ${payload.answer || ""}`;
+    case "run_failed":
+      return payload.error || "Run failed";
+    default:
+      return JSON.stringify(payload);
+  }
 }
 
 function renderTrace(events) {
@@ -112,10 +207,19 @@ function renderTrace(events) {
   container.innerHTML = events
     .map(
       (event) => `
-      <article class="event">
-        <strong>${escapeHtml(event.type)}</strong>
-        <div class="label">${escapeHtml(event.timestamp || "")}</div>
-        <pre>${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>
+      <article class="timeline-item ${escapeHtml(eventTone(event))}">
+        <div class="timeline-marker"></div>
+        <div class="timeline-body">
+          <div class="timeline-head">
+            <strong>${escapeHtml(eventTitle(event.type))}</strong>
+            <span class="label">${escapeHtml(event.timestamp || "")}</span>
+          </div>
+          <div class="event-summary">${escapeHtml(eventSummary(event))}</div>
+          <details>
+            <summary>Payload</summary>
+            <pre>${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>
+          </details>
+        </div>
       </article>`
     )
     .join("");
@@ -148,12 +252,7 @@ async function refreshRuns() {
 
   container.querySelectorAll("[data-open-run]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const detail = await api(`/runs/${button.dataset.openRun}`);
-      state.currentRunId = detail.run_id;
-      setStatus(detail.status);
-      renderTrace(await api(`/traces/${detail.run_id}`));
-      switchTab("trace");
-      refreshRuns();
+      await loadRun(button.dataset.openRun, { switchToTrace: true });
     });
   });
 }
@@ -253,4 +352,5 @@ refreshTools();
 refreshRuns();
 refreshMemory();
 refreshApprovals();
+renderRunDetail(null);
 renderTrace([]);
