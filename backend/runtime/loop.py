@@ -21,6 +21,7 @@ from backend.runtime.actions import FinalAnswerAction, ToolCallAction
 from backend.runtime.context import ContextBuilder
 from backend.runtime.events import TraceEventType
 from backend.runtime.state import AgentRunResult
+from backend.runtime.status import RunStatus
 from backend.storage.models import AgentRunRecord, MessageRecord, new_id
 from backend.tools.executor import ToolExecutor
 from backend.tools.policy import PolicyDecisionType, ToolPolicy
@@ -77,7 +78,7 @@ class AgentRuntime:
 
         run = AgentRunRecord(
             id=new_id("run"),
-            status="running",
+            status=RunStatus.RUNNING.value,
             user_input=user_message,
             steps=0,
         )
@@ -100,7 +101,7 @@ class AgentRuntime:
 
         approval = self.approval_manager.resolve(approval_id, approved)
         run = self._require_run(approval.run_id)
-        run.status = "running"
+        run.status = RunStatus.RUNNING.value
         self.trace_store.append(
             run.id,
             TraceEventType.APPROVAL_RESOLVED.value,
@@ -263,7 +264,7 @@ class AgentRuntime:
 
         if decision.decision == PolicyDecisionType.APPROVAL_REQUIRED:
             approval = self.approval_manager.create(run.id, action, tool, decision)
-            run.status = "waiting_for_approval"
+            run.status = RunStatus.WAITING_FOR_APPROVAL.value
             self.trace_store.append(
                 run.id,
                 TraceEventType.APPROVAL_REQUESTED.value,
@@ -326,7 +327,7 @@ class AgentRuntime:
         """持久化最终答案，并执行非关键路径的 memory extraction。"""
 
         self._append_message(run.id, {"role": "assistant", "content": answer})
-        run.status = "completed"
+        run.status = RunStatus.COMPLETED.value
         run.answer = answer
         self.trace_store.append(run.id, TraceEventType.RUN_COMPLETED.value, {"answer": answer})
         try:
@@ -345,7 +346,7 @@ class AgentRuntime:
     def _fail_run(self, run: AgentRunRecord, message: str) -> AgentRunResult:
         """用统一结构持久化 fatal runtime/provider failure。"""
 
-        run.status = "failed"
+        run.status = RunStatus.FAILED.value
         run.answer = message
         self.trace_store.append(run.id, TraceEventType.RUN_FAILED.value, {"error": message})
         self.session.commit()

@@ -173,7 +173,7 @@ textarea {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   border-bottom: 1px solid var(--line);
 }
 
@@ -246,6 +246,11 @@ pre {
 .danger {
   color: var(--danger);
   border-color: #fecaca;
+}
+
+.row.selected {
+  border-color: var(--accent);
+  background: var(--soft);
 }
 
 @media (max-width: 900px) {

@@ -32,6 +32,7 @@
       <section class="control-pane">
         <nav class="tabs">
           <button class="tab active" data-tab="trace">Trace</button>
+          <button class="tab" data-tab="runs">Runs</button>
           <button class="tab" data-tab="memory">Memory</button>
           <button class="tab" data-tab="approvals">Approvals</button>
           <button class="tab" data-tab="tools">Tools</button>
@@ -43,6 +44,14 @@
             <button id="refresh-trace">Refresh</button>
           </div>
           <div id="trace-list" class="event-list"></div>
+        </section>
+
+        <section id="runs" class="panel">
+          <div class="panel-head">
+            <h2>Runs</h2>
+            <button id="refresh-runs">Refresh</button>
+          </div>
+          <div id="run-list" class="table-list"></div>
         </section>
 
         <section id="memory" class="panel">

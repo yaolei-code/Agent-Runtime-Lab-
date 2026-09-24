@@ -63,6 +63,7 @@
 │   │   ├── approvals.py           # 审批列表、approve、reject API
 │   │   ├── chat.py                # POST /chat
 │   │   ├── memory.py              # Memory 查询和删除 API
+│   │   ├── runs.py                # Run 列表和详情 API
 │   │   ├── tools.py               # Tools 列表 API
 │   │   └── traces.py              # Trace 查询 API
 │   ├── approval/
@@ -984,6 +985,8 @@ memory_entries 独立存在，source 可以保存 run:{run_id}
 |---|---|---|---|---|
 | `GET` | `/` | 无 | HTML | 返回前端页面 |
 | `POST` | `/chat` | `{"message": "..."}` | `{run_id,status,answer,approval_id,trace}` | 启动一次 Agent Run |
+| `GET` | `/runs` | query: `limit` 可选 | run summary list | 查看最近 Agent Runs |
+| `GET` | `/runs/{run_id}` | path: `run_id` | run detail | 查看单个 run 的状态和 pending approval 摘要 |
 | `GET` | `/traces/{run_id}` | path: `run_id` | trace event list | 查询某次 run 的结构化执行轨迹 |
 | `GET` | `/memory` | 无 | memory entry list | 查看长期记忆 |
 | `DELETE` | `/memory/{memory_id}` | path: `memory_id` | `{"deleted": true}` | 删除长期记忆 |
@@ -1092,6 +1095,7 @@ memory_entries 独立存在，source 可以保存 run:{run_id}
   - reject。
   - resume run。
 - Trace events 持久化。
+- Run list/detail 查询。
 - Memory store。
 - Memory retrieval，基于 SQLAlchemy `ilike`。
 - Run 完成后自动写 `task_summary` memory。
@@ -1309,7 +1313,7 @@ Warnings 主要来自 SQLAlchemy 依赖和项目中 `datetime.utcnow()` 的弃�
 ```mermaid
 flowchart TD
     Browser[Browser UI] -->|fetch /chat| API[FastAPI API]
-    Browser -->|fetch /traces /memory /approvals /tools| API
+    Browser -->|fetch /runs /traces /memory /approvals /tools| API
 
     API --> Bootstrap[bootstrap.build_runtime]
     Bootstrap --> Runtime[AgentRuntime]
@@ -1445,4 +1449,3 @@ sequenceDiagram
 8. `backend/storage/models.py`
 
    看 run 和 message 如何持久化。这是理解 resume、trace、approval 关联关系的基础。
-

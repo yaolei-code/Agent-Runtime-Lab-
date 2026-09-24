@@ -72,6 +72,7 @@ function handleRunResult(result) {
     addMessage("assistant", result.answer);
   }
   renderTrace(result.trace || []);
+  refreshRuns();
   refreshMemory();
 }
 
@@ -89,6 +90,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
 });
 
 document.querySelector("#refresh-trace").addEventListener("click", refreshTrace);
+document.querySelector("#refresh-runs").addEventListener("click", refreshRuns);
 document.querySelector("#refresh-memory").addEventListener("click", refreshMemory);
 document.querySelector("#refresh-approvals").addEventListener("click", refreshApprovals);
 document.querySelector("#refresh-tools").addEventListener("click", refreshTools);
@@ -117,6 +119,43 @@ function renderTrace(events) {
       </article>`
     )
     .join("");
+}
+
+async function refreshRuns() {
+  const items = await api("/runs");
+  const container = document.querySelector("#run-list");
+  if (!items.length) {
+    container.innerHTML = `<div class="row">No runs yet.</div>`;
+    return;
+  }
+  container.innerHTML = items
+    .map(
+      (item) => `
+      <article class="row ${item.run_id === state.currentRunId ? "selected" : ""}">
+        <div class="row-grid">
+          <div class="label">status</div><div>${escapeHtml(item.status)}</div>
+          <div class="label">input</div><div>${escapeHtml(item.user_input)}</div>
+          <div class="label">answer</div><div>${escapeHtml(item.answer || "")}</div>
+          <div class="label">steps</div><div>${escapeHtml(item.steps)}</div>
+          <div class="label">created_at</div><div>${escapeHtml(item.created_at)}</div>
+        </div>
+        <div class="actions">
+          <button data-open-run="${escapeHtml(item.run_id)}">Open</button>
+        </div>
+      </article>`
+    )
+    .join("");
+
+  container.querySelectorAll("[data-open-run]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const detail = await api(`/runs/${button.dataset.openRun}`);
+      state.currentRunId = detail.run_id;
+      setStatus(detail.status);
+      renderTrace(await api(`/traces/${detail.run_id}`));
+      switchTab("trace");
+      refreshRuns();
+    });
+  });
 }
 
 async function refreshMemory() {
@@ -211,6 +250,7 @@ async function refreshTools() {
 }
 
 refreshTools();
+refreshRuns();
 refreshMemory();
 refreshApprovals();
 renderTrace([]);

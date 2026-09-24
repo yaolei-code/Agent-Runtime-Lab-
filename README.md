@@ -13,6 +13,7 @@ Personal Agent Hub v2 is a lightweight Agent Runtime / Harness. It is not a norm
 - Alembic-managed schema migrations
 - Long-term memory store and portable retrieval boundary
 - Structured trace events per run
+- Run list/detail API for inspecting historical executions
 - FastAPI API and built-in Web UI
 - Dockerfile for deployment
 
@@ -185,6 +186,13 @@ Trace:
 
 ```text
 GET /traces/{run_id}
+```
+
+Runs:
+
+```text
+GET /runs
+GET /runs/{run_id}
 ```
 
 Approvals:

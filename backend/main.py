@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.api import approvals, chat, memory, tools, traces
+from backend.api import approvals, chat, memory, runs, tools, traces
 
 
 def create_app() -> FastAPI:
@@ -12,6 +12,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(approvals.router)
     app.include_router(memory.router)
+    app.include_router(runs.router)
     app.include_router(traces.router)
     app.include_router(tools.router)
 
