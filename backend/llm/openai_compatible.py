@@ -1,3 +1,10 @@
+"""OpenAI-compatible Chat Completions provider adapter。
+
+这是唯一理解 OpenAI SDK response object 的层。它把原生 tool-calling
+响应转换成 runtime 的 FinalAnswerAction 或 ToolCallAction，从而让
+Agent Loop 保持 provider-neutral。
+"""
+
 import json
 from typing import Any
 
@@ -9,6 +16,8 @@ from backend.runtime.actions import AgentAction, FinalAnswerAction, ToolCallActi
 
 
 class OpenAICompatibleProvider(LLMProvider):
+    """OpenAI-compatible Chat Completions API 的适配器。"""
+
     def __init__(self, settings: Settings) -> None:
         if not settings.llm_api_key:
             raise LLMProviderError("LLM_API_KEY is required.")
@@ -23,6 +32,8 @@ class OpenAICompatibleProvider(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> AgentAction:
+        """调用模型，并把响应归一化成 runtime action。"""
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -36,6 +47,8 @@ class OpenAICompatibleProvider(LLMProvider):
         message = response.choices[0].message
         tool_calls = message.tool_calls or []
         if tool_calls:
+            # 当前版本每轮 loop 只处理一个 tool call。未来如果要支持多个，
+            # 可以引入 multi-tool action 或队列。
             tool_call = tool_calls[0]
             arguments = self._parse_arguments(tool_call.function.arguments)
             return ToolCallAction(
@@ -49,6 +62,8 @@ class OpenAICompatibleProvider(LLMProvider):
         return FinalAnswerAction(kind="final_answer", content=message.content or "")
 
     def _parse_arguments(self, raw_arguments: str | None) -> dict[str, Any]:
+        """把 provider 输出的 JSON 参数解析成工具执行所需的 dict。"""
+
         if not raw_arguments:
             return {}
         try:
@@ -60,6 +75,8 @@ class OpenAICompatibleProvider(LLMProvider):
         return parsed
 
     def _assistant_message_to_dict(self, message: Any) -> dict[str, Any]:
+        """保留 assistant tool-call message，供下一轮 provider 调用使用。"""
+
         payload: dict[str, Any] = {"role": "assistant", "content": message.content}
         if message.tool_calls:
             payload["tool_calls"] = [

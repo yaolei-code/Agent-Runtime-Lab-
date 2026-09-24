@@ -1,3 +1,5 @@
+"""Human-in-the-loop approval 的持久化辅助模块。"""
+
 from datetime import datetime
 from typing import Any
 
@@ -11,6 +13,13 @@ from backend.tools.policy import PolicyDecision
 
 
 class ApprovalManager:
+    """创建和解决 approval 记录。
+
+    Approval 不只是 UI flag。持久化记录里保存了足够的 tool-call 数据，
+    让 AgentRuntime.resume_from_approval() 可以在创建 approval 的 HTTP
+    请求早已返回之后，继续原来的 run。
+    """
+
     def __init__(self, session: Session) -> None:
         self.session = session
 
@@ -21,6 +30,8 @@ class ApprovalManager:
         tool: Tool,
         decision: PolicyDecision,
     ) -> PendingApprovalRecord:
+        """为被 policy 拦下的工具调用持久化一个 pending approval。"""
+
         approval = PendingApprovalRecord(
             run_id=run_id,
             tool_call_id=action.call_id,
@@ -36,6 +47,8 @@ class ApprovalManager:
         return approval
 
     def list_pending(self) -> list[dict[str, Any]]:
+        """返回 control-plane UI 需要展示的 pending approval。"""
+
         approvals = self.session.scalars(
             select(PendingApprovalRecord)
             .where(PendingApprovalRecord.status == "pending")
@@ -44,6 +57,8 @@ class ApprovalManager:
         return [self.serialize(item) for item in approvals]
 
     def resolve(self, approval_id: str, approved: bool) -> PendingApprovalRecord:
+        """把 approval 标记为 approved/rejected，且只能解决一次。"""
+
         approval = self.session.get(PendingApprovalRecord, approval_id)
         if approval is None:
             raise KeyError(f"Unknown approval: {approval_id}")
@@ -55,6 +70,8 @@ class ApprovalManager:
         return approval
 
     def serialize(self, approval: PendingApprovalRecord) -> dict[str, Any]:
+        """把 ORM 状态转换成 API 友好的 approval 数据。"""
+
         return {
             "approval_id": approval.id,
             "run_id": approval.run_id,

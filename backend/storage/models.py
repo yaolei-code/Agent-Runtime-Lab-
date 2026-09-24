@@ -1,3 +1,9 @@
+"""Agent run 和对话消息的核心持久化记录。
+
+runtime 在这里保存足够的状态，用于 run 完成后的检查，以及在不依赖内存中
+Python 对象的情况下恢复因 approval 暂停的 run。
+"""
+
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
@@ -9,10 +15,14 @@ from backend.storage.database import Base
 
 
 def new_id(prefix: str) -> str:
+    """创建带类型前缀的可读 ID，方便 UI 和日志追踪。"""
+
     return f"{prefix}_{uuid4().hex}"
 
 
 class AgentRunRecord(Base):
+    """一次用户触发的 Agent Run 的顶层生命周期记录。"""
+
     __tablename__ = "agent_runs"
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
@@ -30,6 +40,12 @@ class AgentRunRecord(Base):
 
 
 class MessageRecord(Base):
+    """持久化的 provider-style 对话消息。
+
+    `raw` 保留原始 message 结构，包括 tool_calls 等字段。这样 runtime
+    可以跨 loop iteration 和 approval resume 边界重建模型上下文。
+    """
+
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
