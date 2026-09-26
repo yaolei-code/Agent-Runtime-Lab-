@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.approval.manager import ApprovalManager
+from backend.checkpoint.store import CheckpointStore
 from backend.llm.base import LLMProvider, LLMProviderError
 from backend.memory.extractor import MemoryExtractor
 from backend.memory.retrieval import MemoryRetriever
@@ -46,6 +47,7 @@ class AgentRuntime:
         tool_policy: ToolPolicy,
         approval_manager: ApprovalManager,
         trace_store: TraceStore,
+        checkpoint_store: CheckpointStore,
         memory_retriever: MemoryRetriever,
         memory_extractor: MemoryExtractor,
         context_builder: ContextBuilder | None = None,
@@ -64,6 +66,7 @@ class AgentRuntime:
         self.tool_policy = tool_policy
         self.approval_manager = approval_manager
         self.trace_store = trace_store
+        self.checkpoint_store = checkpoint_store
         self.memory_retriever = memory_retriever
         self.memory_extractor = memory_extractor
         self.context_builder = context_builder or ContextBuilder()
@@ -88,6 +91,42 @@ class AgentRuntime:
             run.id,
             TraceEventType.RUN_STARTED.value,
             {"user_input": user_message},
+        )
+        self._checkpoint(run, "run_started", {"user_input": user_message})
+        self.session.commit()
+        return self._continue(run.id)
+
+    def resume_run(self, run_id: str) -> AgentRunResult:
+        """Manually resume a failed run from the latest safe checkpoint.
+
+        V0.3 intentionally supports only explicit manual resume for failed runs.
+        It does not infer stale running runs, scan on startup, or resume through
+        approval boundaries.
+        """
+
+        run = self._require_run(run_id)
+        if run.status == RunStatus.COMPLETED.value:
+            raise ValueError("Completed runs cannot be resumed.")
+        if run.status == RunStatus.WAITING_FOR_APPROVAL.value:
+            raise ValueError("Run is waiting for approval. Use approval approve/reject API.")
+        if run.status == RunStatus.RUNNING.value:
+            raise ValueError("Running runs cannot be manually resumed in this version.")
+        if run.status != RunStatus.FAILED.value:
+            raise ValueError(f"Run status cannot be resumed: {run.status}")
+
+        checkpoint = self.checkpoint_store.latest_safe_for_run(run.id)
+        if checkpoint is None:
+            raise ValueError("Run has no safe checkpoint to resume from.")
+
+        run.status = RunStatus.RUNNING.value
+        self.trace_store.append(
+            run.id,
+            TraceEventType.RUN_RESUMED.value,
+            {
+                "checkpoint_id": checkpoint.id,
+                "checkpoint_kind": checkpoint.kind,
+                "checkpoint_sequence": checkpoint.sequence,
+            },
         )
         self.session.commit()
         return self._continue(run.id)
@@ -162,6 +201,11 @@ class AgentRuntime:
                 TraceEventType.LLM_REQUEST.value,
                 {"message_count": len(context), "tool_count": len(self.tool_registry.list_tools())},
             )
+            self._checkpoint(
+                run,
+                "before_llm",
+                {"message_count": len(messages), "tool_count": len(self.tool_registry.list_tools())},
+            )
 
             try:
                 # Provider adapter 返回内部 action，而不是 SDK object。
@@ -180,6 +224,7 @@ class AgentRuntime:
                 TraceEventType.LLM_RESPONSE.value,
                 {"action": action.kind},
             )
+            self._checkpoint(run, "after_llm", {"action": action.kind})
 
             if isinstance(action, FinalAnswerAction):
                 return self._complete_run(run, action.content)
@@ -276,6 +321,15 @@ class AgentRuntime:
                     "reason": decision.reason,
                 },
             )
+            self._checkpoint(
+                run,
+                "approval_pause",
+                {
+                    "approval_id": approval.id,
+                    "tool_name": action.tool_name,
+                    "risk_level": tool.risk_level.value,
+                },
+            )
             # 不在当前请求里等待。持久化暂停点，让 Approvals API 之后恢复 run。
             self.session.commit()
             return self._result(run, approval_id=approval.id)
@@ -322,6 +376,15 @@ class AgentRuntime:
                 "content": result.content,
             },
         )
+        self._checkpoint(
+            run,
+            "after_tool",
+            {
+                "tool_call_id": call_id,
+                "tool_name": tool_name,
+                "ok": result.ok,
+            },
+        )
 
     def _complete_run(self, run: AgentRunRecord, answer: str) -> AgentRunResult:
         """持久化最终答案，并执行非关键路径的 memory extraction。"""
@@ -349,6 +412,7 @@ class AgentRuntime:
         run.status = RunStatus.FAILED.value
         run.answer = message
         self.trace_store.append(run.id, TraceEventType.RUN_FAILED.value, {"error": message})
+        self._checkpoint(run, "run_failed", {"error": message})
         self.session.commit()
         return self._result(run)
 
@@ -391,6 +455,28 @@ class AgentRuntime:
         )
         self.session.add(record)
         self.session.flush()
+
+    def _checkpoint(
+        self,
+        run: AgentRunRecord,
+        kind: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a durable runtime boundary without changing control flow."""
+
+        self.checkpoint_store.append(
+            run.id,
+            step=run.steps,
+            kind=kind,
+            run_status=run.status,
+            message_count=self._message_count(run.id),
+            payload=payload,
+        )
+
+    def _message_count(self, run_id: str) -> int:
+        return self.session.scalar(
+            select(func.count(MessageRecord.id)).where(MessageRecord.run_id == run_id)
+        ) or 0
 
     def _load_messages(self, run_id: str) -> list[dict[str, Any]]:
         """为下一次 LLM 调用重建已持久化的对话历史。"""

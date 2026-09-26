@@ -9,6 +9,8 @@ from sqlalchemy.pool import StaticPool
 
 from backend.approval.manager import ApprovalManager
 from backend.approval import models as approval_models  # noqa: F401
+from backend.checkpoint import models as checkpoint_models  # noqa: F401
+from backend.checkpoint.store import CheckpointStore
 from backend.config.settings import Settings
 from backend.llm.base import LLMProvider
 from backend.memory import models as memory_models  # noqa: F401
@@ -96,6 +98,7 @@ def make_runtime(
         tool_policy=policy or ToolPolicy(),
         approval_manager=ApprovalManager(session),
         trace_store=trace_store,
+        checkpoint_store=CheckpointStore(session),
         memory_retriever=SQLAlchemyMemoryRetriever(session),
         memory_extractor=MemoryExtractor(memory_store, trace_store),
         max_steps=max_steps or settings.max_steps,

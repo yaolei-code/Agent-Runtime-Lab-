@@ -15,3 +15,4 @@ class TraceEventType(StrEnum):
     MEMORY_WRITTEN = "memory_written"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
+    RUN_RESUMED = "run_resumed"

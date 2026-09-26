@@ -8,6 +8,7 @@ policy、memory、trace 等职责塌缩成一个巨大的类。
 from sqlalchemy.orm import Session
 
 from backend.approval.manager import ApprovalManager
+from backend.checkpoint.store import CheckpointStore
 from backend.config.settings import Settings
 from backend.llm.base import LLMProvider
 from backend.llm.fake import FakeRuleBasedProvider
@@ -64,6 +65,7 @@ def build_runtime(
         tool_policy=ToolPolicy(),
         approval_manager=ApprovalManager(session),
         trace_store=trace_store,
+        checkpoint_store=CheckpointStore(session),
         memory_retriever=SQLAlchemyMemoryRetriever(session),
         memory_extractor=MemoryExtractor(memory_store, trace_store),
         max_steps=settings.max_steps,

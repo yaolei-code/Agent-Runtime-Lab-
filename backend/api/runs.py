@@ -13,6 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.approval.models import PendingApprovalRecord
+from backend.api.chat import ChatResponse, to_response
+from backend.bootstrap import build_runtime
+from backend.config.settings import Settings, load_settings
+from backend.llm.base import LLMProviderError
 from backend.storage.database import get_session
 from backend.storage.models import AgentRunRecord
 
@@ -102,3 +106,22 @@ def get_run(run_id: str, session: Session = Depends(get_session)) -> RunDetail:
             else None
         ),
     )
+
+
+@router.post("/{run_id}/resume", response_model=ChatResponse)
+def resume_run(
+    run_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(load_settings),
+) -> ChatResponse:
+    """Manually resume a failed run from its latest safe checkpoint."""
+
+    try:
+        runtime = build_runtime(session, settings)
+        return to_response(runtime.resume_run(run_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LLMProviderError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
