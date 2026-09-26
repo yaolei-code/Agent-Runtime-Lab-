@@ -11,6 +11,7 @@ from backend.approval import models as approval_models  # noqa: F401
 from backend.checkpoint import models as checkpoint_models  # noqa: F401
 from backend.memory import models as memory_models  # noqa: F401
 from backend.storage import models as storage_models  # noqa: F401
+from backend.tools import execution_models as tool_execution_models  # noqa: F401
 from backend.trace import models as trace_models  # noqa: F401
 
 config = context.config

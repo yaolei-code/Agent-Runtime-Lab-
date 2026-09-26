@@ -5,6 +5,7 @@ from backend.config.settings import load_settings
 from backend.main import create_app
 from backend.storage.database import get_session
 from backend.storage.models import AgentRunRecord, MessageRecord
+from backend.tools.execution_store import ToolExecutionStore
 
 
 def test_list_runs_returns_recent_runs(db_session):
@@ -201,4 +202,50 @@ def test_resume_failed_run_with_safe_checkpoint(db_session, settings):
     payload = response.json()
     assert payload["run_id"] == "run_resume"
     assert payload["status"] == "completed"
+    app.dependency_overrides.clear()
+
+
+def test_resume_run_with_uncertain_tool_execution_returns_409(db_session, settings):
+    run = AgentRunRecord(
+        id="run_uncertain",
+        status="failed",
+        user_input="hello",
+        answer="failed",
+        steps=1,
+    )
+    db_session.add(run)
+    db_session.add(
+        MessageRecord(
+            id="msg_uncertain",
+            run_id=run.id,
+            role="user",
+            content="hello",
+            raw={"role": "user", "content": "hello"},
+            sequence=1,
+        )
+    )
+    db_session.flush()
+    CheckpointStore(db_session).append(
+        run.id,
+        step=1,
+        kind="before_llm",
+        run_status="running",
+        message_count=1,
+    )
+    ToolExecutionStore(db_session).begin(
+        run.id,
+        "call_uncertain",
+        "calculator",
+        {"expression": "1 + 1"},
+    )
+    db_session.commit()
+    app = create_app()
+    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[load_settings] = lambda: settings
+    client = TestClient(app)
+
+    response = client.post(f"/runs/{run.id}/resume")
+
+    assert response.status_code == 409
+    assert "unknown outcome" in response.json()["detail"]
     app.dependency_overrides.clear()

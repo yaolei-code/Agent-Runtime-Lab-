@@ -25,6 +25,8 @@ from backend.tools.builtin.approval_demo import ApprovalDemoTool
 from backend.tools.builtin.calculator import CalculatorTool
 from backend.tools.builtin.files import ReadFileTool, SearchFilesTool
 from backend.tools.executor import ToolExecutor
+from backend.tools import execution_models as tool_execution_models  # noqa: F401
+from backend.tools.execution_store import ToolExecutionStore
 from backend.tools.policy import ToolPolicy
 from backend.tools.registry import ToolRegistry
 from backend.trace import models as trace_models  # noqa: F401
@@ -99,6 +101,7 @@ def make_runtime(
         approval_manager=ApprovalManager(session),
         trace_store=trace_store,
         checkpoint_store=CheckpointStore(session),
+        tool_execution_store=ToolExecutionStore(session),
         memory_retriever=SQLAlchemyMemoryRetriever(session),
         memory_extractor=MemoryExtractor(memory_store, trace_store),
         max_steps=max_steps or settings.max_steps,

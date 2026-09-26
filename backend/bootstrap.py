@@ -21,6 +21,7 @@ from backend.tools.builtin.approval_demo import ApprovalDemoTool
 from backend.tools.builtin.calculator import CalculatorTool
 from backend.tools.builtin.files import ReadFileTool, SearchFilesTool
 from backend.tools.executor import ToolExecutor
+from backend.tools.execution_store import ToolExecutionStore
 from backend.tools.policy import ToolPolicy
 from backend.tools.registry import ToolRegistry
 from backend.trace.store import TraceStore
@@ -66,6 +67,7 @@ def build_runtime(
         approval_manager=ApprovalManager(session),
         trace_store=trace_store,
         checkpoint_store=CheckpointStore(session),
+        tool_execution_store=ToolExecutionStore(session),
         memory_retriever=SQLAlchemyMemoryRetriever(session),
         memory_extractor=MemoryExtractor(memory_store, trace_store),
         max_steps=settings.max_steps,

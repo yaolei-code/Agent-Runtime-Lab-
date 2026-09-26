@@ -9,6 +9,8 @@ class TraceEventType(StrEnum):
     TOOL_STARTED = "tool_started"
     TOOL_COMPLETED = "tool_completed"
     TOOL_FAILED = "tool_failed"
+    TOOL_RESULT_REUSED = "tool_result_reused"
+    TOOL_EXECUTION_UNCERTAIN = "tool_execution_uncertain"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVAL_RESOLVED = "approval_resolved"
     MEMORY_RETRIEVED = "memory_retrieved"

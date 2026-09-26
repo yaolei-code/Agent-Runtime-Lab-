@@ -25,6 +25,8 @@ from backend.runtime.state import AgentRunResult
 from backend.runtime.status import RunStatus
 from backend.storage.models import AgentRunRecord, MessageRecord, new_id
 from backend.tools.executor import ToolExecutor
+from backend.tools.execution_models import ToolExecutionStatus
+from backend.tools.execution_store import ToolExecutionStore, UncertainToolExecutionError
 from backend.tools.policy import PolicyDecisionType, ToolPolicy
 from backend.tools.registry import ToolRegistry
 from backend.trace.store import TraceStore
@@ -48,6 +50,7 @@ class AgentRuntime:
         approval_manager: ApprovalManager,
         trace_store: TraceStore,
         checkpoint_store: CheckpointStore,
+        tool_execution_store: ToolExecutionStore,
         memory_retriever: MemoryRetriever,
         memory_extractor: MemoryExtractor,
         context_builder: ContextBuilder | None = None,
@@ -67,6 +70,7 @@ class AgentRuntime:
         self.approval_manager = approval_manager
         self.trace_store = trace_store
         self.checkpoint_store = checkpoint_store
+        self.tool_execution_store = tool_execution_store
         self.memory_retriever = memory_retriever
         self.memory_extractor = memory_extractor
         self.context_builder = context_builder or ContextBuilder()
@@ -114,11 +118,35 @@ class AgentRuntime:
         if run.status != RunStatus.FAILED.value:
             raise ValueError(f"Run status cannot be resumed: {run.status}")
 
-        checkpoint = self.checkpoint_store.latest_safe_for_run(run.id)
+        unresolved = self.tool_execution_store.unresolved_for_run(run.id)
+        if unresolved:
+            for execution in unresolved:
+                if execution.status == ToolExecutionStatus.STARTED.value:
+                    self.tool_execution_store.mark_unknown(execution)
+                self.trace_store.append(
+                    run.id,
+                    TraceEventType.TOOL_EXECUTION_UNCERTAIN.value,
+                    {
+                        "tool_call_id": execution.tool_call_id,
+                        "tool_name": execution.tool_name,
+                    },
+                )
+            self.session.commit()
+            raise ValueError(
+                "Run contains a tool execution with an unknown outcome; automatic replay is unsafe."
+            )
+
+        checkpoint = self.checkpoint_store.latest_compatible_safe_for_run(
+            run.id,
+            self._message_count(run.id),
+        )
         if checkpoint is None:
-            raise ValueError("Run has no safe checkpoint to resume from.")
+            if self.checkpoint_store.latest_safe_for_run(run.id) is None:
+                raise ValueError("Run has no safe checkpoint to resume from.")
+            raise ValueError("Run state has diverged from its safe checkpoint and cannot be resumed.")
 
         run.status = RunStatus.RUNNING.value
+        run.answer = None
         self.trace_store.append(
             run.id,
             TraceEventType.RUN_RESUMED.value,
@@ -154,12 +182,15 @@ class AgentRuntime:
         if approved:
             # approval 记录保存了原始 call_id/name/arguments，
             # 这是恢复执行所需的最小持久化状态。
-            self._execute_tool_call(
-                run,
-                call_id=approval.tool_call_id,
-                tool_name=approval.tool_name,
-                arguments=approval.arguments,
-            )
+            try:
+                self._execute_tool_call(
+                    run,
+                    call_id=approval.tool_call_id,
+                    tool_name=approval.tool_name,
+                    arguments=approval.arguments,
+                )
+            except UncertainToolExecutionError as exc:
+                return self._fail_run(run, str(exc))
         else:
             # reject 被建模为 tool response，这样下一轮 LLM 调用会像看到普通
             # tool result 一样看到这次拒绝。
@@ -181,7 +212,11 @@ class AgentRuntime:
 
         run = self._require_run(run_id)
 
-        while run.steps < self.max_steps:
+        # max_steps 是单次 start/resume 尝试的预算；run.steps 仍累计展示总步数。
+        # 否则一个因 max_steps 失败的 run 在 resume 后会立即再次失败。
+        steps_this_attempt = 0
+        while steps_this_attempt < self.max_steps:
+            steps_this_attempt += 1
             run.steps += 1
             # 每一轮都从持久化层重新加载 messages。这样跨 approval resume
             # 边界时，数据库就是上下文的事实来源。
@@ -252,9 +287,10 @@ class AgentRuntime:
         返回给调用方，例如进入 approval pause。
         """
 
-        # 在执行工具/暂停决策前先保存 assistant tool-call message，
-        # 这样下一次 provider 调用能重建准确的对话。
-        self._append_message(run.id, action.assistant_message)
+        # provider 可能在恢复或重试后再次给出同一个 call_id。已经持久化的
+        # assistant tool-call 不应重复追加，否则会形成无对应结果的消息。
+        if not self._has_message(run.id, "assistant", action.call_id):
+            self._append_message(run.id, action.assistant_message)
         self.trace_store.append(
             run.id,
             TraceEventType.TOOL_REQUESTED.value,
@@ -334,7 +370,10 @@ class AgentRuntime:
             self.session.commit()
             return self._result(run, approval_id=approval.id)
 
-        self._execute_tool_call(run, action.call_id, action.tool_name, action.arguments)
+        try:
+            self._execute_tool_call(run, action.call_id, action.tool_name, action.arguments)
+        except UncertainToolExecutionError as exc:
+            return self._fail_run(run, str(exc))
         self.session.commit()
         return None
 
@@ -347,12 +386,55 @@ class AgentRuntime:
     ) -> None:
         """执行一个已批准/已允许的工具调用，并追加 tool message。"""
 
+        existing = self.tool_execution_store.get(run.id, call_id)
+        if existing is not None:
+            if existing.tool_name != tool_name or existing.arguments != arguments:
+                raise UncertainToolExecutionError(
+                    f"Tool call {call_id} does not match its persisted execution record."
+                )
+            if existing.status != ToolExecutionStatus.COMPLETED.value:
+                if existing.status == ToolExecutionStatus.STARTED.value:
+                    self.tool_execution_store.mark_unknown(existing)
+                self.trace_store.append(
+                    run.id,
+                    TraceEventType.TOOL_EXECUTION_UNCERTAIN.value,
+                    {"tool_call_id": call_id, "tool_name": tool_name},
+                )
+                self.session.commit()
+                raise UncertainToolExecutionError(
+                    f"Tool execution outcome is unknown for call {call_id}; refusing to replay it."
+                )
+
+            result = self.tool_execution_store.to_result(existing)
+            self.trace_store.append(
+                run.id,
+                TraceEventType.TOOL_RESULT_REUSED.value,
+                {"tool_call_id": call_id, "tool_name": tool_name},
+            )
+            if not self._has_message(run.id, "tool", call_id):
+                self._append_tool_result_message(run.id, call_id, tool_name, result.content)
+                self._checkpoint(
+                    run,
+                    "after_tool",
+                    {
+                        "tool_call_id": call_id,
+                        "tool_name": tool_name,
+                        "ok": result.ok,
+                        "reused": True,
+                    },
+                )
+            return
+
         self.trace_store.append(
             run.id,
             TraceEventType.TOOL_STARTED.value,
             {"tool_call_id": call_id, "tool_name": tool_name},
         )
+        execution = self.tool_execution_store.begin(run.id, call_id, tool_name, arguments)
+        # 先提交执行意图，再进入不可与数据库事务绑定的外部副作用。
+        self.session.commit()
         result = self.tool_executor.execute(tool_name, arguments)
+        self.tool_execution_store.complete(execution, result)
         event_type = TraceEventType.TOOL_COMPLETED if result.ok else TraceEventType.TOOL_FAILED
         self.trace_store.append(
             run.id,
@@ -367,15 +449,7 @@ class AgentRuntime:
         )
         # tool result 必须作为 message 追加，并通过 tool_call_id 关联，
         # 这样下一轮 LLM 才能消费自己请求的结果。
-        self._append_message(
-            run.id,
-            {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "name": tool_name,
-                "content": result.content,
-            },
-        )
+        self._append_tool_result_message(run.id, call_id, tool_name, result.content)
         self._checkpoint(
             run,
             "after_tool",
@@ -441,13 +515,20 @@ class AgentRuntime:
         sequence = self.session.scalar(
             select(func.max(MessageRecord.sequence)).where(MessageRecord.run_id == run_id)
         )
+        tool_call_id = message.get("tool_call_id")
+        tool_name = message.get("name")
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            first_call = message["tool_calls"][0]
+            tool_call_id = first_call.get("id")
+            tool_name = first_call.get("function", {}).get("name")
+
         record = MessageRecord(
             id=new_id("msg"),
             run_id=run_id,
             role=message["role"],
             content=message.get("content"),
-            tool_call_id=message.get("tool_call_id"),
-            tool_name=message.get("name"),
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
             # 保留 provider-style message 结构，包括 tool_calls，
             # 供后续重建上下文。
             raw=message,
@@ -455,6 +536,32 @@ class AgentRuntime:
         )
         self.session.add(record)
         self.session.flush()
+
+    def _append_tool_result_message(
+        self,
+        run_id: str,
+        call_id: str,
+        tool_name: str,
+        content: str,
+    ) -> None:
+        self._append_message(
+            run_id,
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": tool_name,
+                "content": content,
+            },
+        )
+
+    def _has_message(self, run_id: str, role: str, tool_call_id: str) -> bool:
+        return self.session.scalar(
+            select(MessageRecord.id).where(
+                MessageRecord.run_id == run_id,
+                MessageRecord.role == role,
+                MessageRecord.tool_call_id == tool_call_id,
+            )
+        ) is not None
 
     def _checkpoint(
         self,

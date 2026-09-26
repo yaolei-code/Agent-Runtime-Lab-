@@ -9,6 +9,8 @@ from backend.runtime.events import TraceEventType
 from backend.runtime.status import RunStatus
 from backend.storage.models import AgentRunRecord, MessageRecord
 from backend.tools.base import RiskLevel
+from backend.tools.execution_models import ToolExecutionRecord, ToolExecutionStatus
+from backend.tools.execution_store import ToolExecutionStore
 from backend.tools.policy import ToolPolicy
 from tests.conftest import FakeLLMProvider, make_runtime
 
@@ -67,6 +69,52 @@ def test_single_tool_call(db_session, settings):
     assert result.status == "completed"
     assert result.answer == "123 * 456 = 56088"
     assert TraceEventType.TOOL_COMPLETED.value in event_types(result)
+    execution = db_session.scalar(
+        select(ToolExecutionRecord).where(ToolExecutionRecord.run_id == result.run_id)
+    )
+    assert execution.status == ToolExecutionStatus.COMPLETED.value
+    assert execution.result_content == "56088"
+
+
+def test_duplicate_tool_call_id_reuses_completed_result(db_session, settings):
+    provider = FakeLLMProvider(
+        [
+            tool_call("calculator", {"expression": "2 + 3"}, "call_same"),
+            tool_call("calculator", {"expression": "2 + 3"}, "call_same"),
+            FinalAnswerAction(kind="final_answer", content="5"),
+        ]
+    )
+    runtime = make_runtime(db_session, settings, provider)
+
+    result = runtime.start("calculate once")
+
+    assert result.status == RunStatus.COMPLETED.value
+    assert event_types(result).count(TraceEventType.TOOL_STARTED.value) == 1
+    assert TraceEventType.TOOL_RESULT_REUSED.value in event_types(result)
+    tool_messages = db_session.scalars(
+        select(MessageRecord).where(
+            MessageRecord.run_id == result.run_id,
+            MessageRecord.role == "tool",
+            MessageRecord.tool_call_id == "call_same",
+        )
+    ).all()
+    assert len(tool_messages) == 1
+
+
+def test_duplicate_tool_call_id_with_different_arguments_fails(db_session, settings):
+    provider = FakeLLMProvider(
+        [
+            tool_call("calculator", {"expression": "2 + 3"}, "call_conflict"),
+            tool_call("calculator", {"expression": "8 + 9"}, "call_conflict"),
+        ]
+    )
+    runtime = make_runtime(db_session, settings, provider)
+
+    result = runtime.start("conflicting call")
+
+    assert result.status == RunStatus.FAILED.value
+    assert "does not match" in result.answer
+    assert event_types(result).count(TraceEventType.TOOL_STARTED.value) == 1
 
 
 def test_multi_tool_call(db_session, settings):
@@ -207,6 +255,75 @@ def test_resume_failed_run_uses_latest_safe_checkpoint(db_session, settings):
     assert resumed.status == RunStatus.COMPLETED.value
     assert resumed.answer == "recovered"
     assert TraceEventType.RUN_RESUMED.value in event_types(resumed)
+
+
+def test_resume_rejects_checkpoint_when_messages_diverged(db_session, settings):
+    failing_runtime = make_runtime(db_session, settings, FailingProvider())
+    failed = failing_runtime.start("hello")
+    db_session.add(
+        MessageRecord(
+            id="msg_diverged",
+            run_id=failed.run_id,
+            role="assistant",
+            content="uncommitted later state",
+            raw={"role": "assistant", "content": "uncommitted later state"},
+            sequence=2,
+        )
+    )
+    db_session.commit()
+
+    runtime = make_runtime(
+        db_session,
+        settings,
+        FakeLLMProvider([FinalAnswerAction(kind="final_answer", content="should not run")]),
+    )
+
+    with pytest.raises(ValueError, match="diverged"):
+        runtime.resume_run(failed.run_id)
+
+
+def test_resume_rejects_uncertain_tool_execution(db_session, settings):
+    failing_runtime = make_runtime(db_session, settings, FailingProvider())
+    failed = failing_runtime.start("hello")
+    execution_store = ToolExecutionStore(db_session)
+    execution = execution_store.begin(
+        failed.run_id,
+        "call_uncertain",
+        "calculator",
+        {"expression": "1 + 1"},
+    )
+    db_session.commit()
+
+    runtime = make_runtime(db_session, settings, FakeLLMProvider([]))
+
+    with pytest.raises(ValueError, match="unknown outcome"):
+        runtime.resume_run(failed.run_id)
+
+    db_session.refresh(execution)
+    assert execution.status == ToolExecutionStatus.UNKNOWN.value
+
+
+def test_resume_after_max_steps_gets_fresh_attempt_budget(db_session, settings):
+    first_runtime = make_runtime(
+        db_session,
+        settings,
+        FakeLLMProvider([tool_call("calculator", {"expression": "1 + 1"})]),
+        max_steps=1,
+    )
+    failed = first_runtime.start("calculate")
+    assert failed.status == RunStatus.FAILED.value
+
+    resumed_runtime = make_runtime(
+        db_session,
+        settings,
+        FakeLLMProvider([FinalAnswerAction(kind="final_answer", content="2")]),
+        max_steps=1,
+    )
+    resumed = resumed_runtime.resume_run(failed.run_id)
+
+    assert resumed.status == RunStatus.COMPLETED.value
+    assert resumed.answer == "2"
+    assert db_session.get(AgentRunRecord, failed.run_id).steps == 2
 
 
 def test_completed_run_cannot_resume(db_session, settings):
