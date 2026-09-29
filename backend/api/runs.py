@@ -25,6 +25,7 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 
 class RunSummary(BaseModel):
     run_id: str
+    conversation_id: str | None
     status: str
     user_input: str
     answer: str | None
@@ -42,6 +43,7 @@ def serialize_run(run: AgentRunRecord) -> RunSummary:
 
     return RunSummary(
         run_id=run.id,
+        conversation_id=run.conversation_id,
         status=run.status,
         user_input=run.user_input,
         answer=run.answer,

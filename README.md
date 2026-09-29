@@ -13,6 +13,8 @@ Personal Agent Hub v2 is a lightweight Agent Runtime / Harness. It is not a norm
 - Alembic-managed schema migrations
 - Long-term memory store and portable retrieval boundary
 - Structured trace events per run
+- Conversation persistence for multi-turn chat across multiple runs
+- Explicit checkpoints, manual failed-run resume, and durable tool execution records
 - Run list/detail API for inspecting historical executions
 - FastAPI API and built-in Web UI with Chat, Runs, Trace Timeline, Memory, Approvals, and Tools views
 - Dockerfile for deployment
@@ -23,6 +25,7 @@ Personal Agent Hub v2 is a lightweight Agent Runtime / Harness. It is not a norm
 Frontend
   -> FastAPI
   -> AgentRuntime
+     -> ConversationStore
      -> ContextBuilder
      -> LLMProvider
      -> Action
@@ -35,7 +38,7 @@ The runtime does not depend on the OpenAI SDK directly. Provider-specific respon
 
 ## Agent Loop
 
-1. Create `agent_runs` row and user message.
+1. Create or load a conversation, then create an `agent_runs` row and user message.
 2. Retrieve relevant long-term memory.
 3. Build context.
 4. Call OpenAI-compatible LLM with registered tool schemas.
@@ -45,6 +48,18 @@ The runtime does not depend on the OpenAI SDK directly. Provider-specific respon
 8. If allowed, execute tool, append tool result, continue loop.
 9. If approval is required, persist pending approval and pause the run.
 10. When approved/rejected, resume from persisted state.
+
+## Conversations And Runs
+
+A conversation is a durable multi-turn chat. Each user message creates a separate run inside
+that conversation, so approval, trace, checkpoint, and recovery remain scoped to one execution.
+
+When building model context, the runtime includes the current run and up to the most recent
+`CONVERSATION_HISTORY_RUNS` successfully completed runs. Failed or paused historical runs are
+excluded so incomplete tool-call sequences do not enter a later model request.
+
+Omit `conversation_id` on `POST /chat` to create a conversation. Send the returned ID with the
+next message to continue it.
 
 ## Tool System
 
@@ -145,6 +160,7 @@ LLM_API_KEY=your-key
 LLM_MODEL=gpt-4o-mini
 WORKSPACE_DIR=.
 AGENT_MAX_STEPS=8
+CONVERSATION_HISTORY_RUNS=6
 ```
 
 Run migrations:
@@ -182,6 +198,23 @@ Invoke-RestMethod -Uri http://127.0.0.1:8000/chat `
   -Method Post `
   -ContentType "application/json" `
   -Body '{"message":"帮我计算 123 * 456"}'
+```
+
+Continue a conversation:
+
+```json
+{
+  "message": "继续解释刚才的结果",
+  "conversation_id": "conv_..."
+}
+```
+
+Conversations:
+
+```text
+POST /conversations
+GET /conversations
+GET /conversations/{conversation_id}/messages
 ```
 
 Trace:

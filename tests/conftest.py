@@ -11,6 +11,8 @@ from backend.approval.manager import ApprovalManager
 from backend.approval import models as approval_models  # noqa: F401
 from backend.checkpoint import models as checkpoint_models  # noqa: F401
 from backend.checkpoint.store import CheckpointStore
+from backend.conversation import models as conversation_models  # noqa: F401
+from backend.conversation.store import ConversationStore
 from backend.config.settings import Settings
 from backend.llm.base import LLMProvider
 from backend.memory import models as memory_models  # noqa: F401
@@ -101,6 +103,7 @@ def make_runtime(
         approval_manager=ApprovalManager(session),
         trace_store=trace_store,
         checkpoint_store=CheckpointStore(session),
+        conversation_store=ConversationStore(session, settings.conversation_history_runs),
         tool_execution_store=ToolExecutionStore(session),
         memory_retriever=SQLAlchemyMemoryRetriever(session),
         memory_extractor=MemoryExtractor(memory_store, trace_store),

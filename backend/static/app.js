@@ -1,11 +1,15 @@
 const state = {
   currentRunId: null,
+  currentConversationId: null,
+  startingNewConversation: false,
 };
 
 const messages = document.querySelector("#messages");
 const form = document.querySelector("#chat-form");
 const input = document.querySelector("#chat-input");
 const statusEl = document.querySelector("#run-status");
+const conversationSelect = document.querySelector("#conversation-select");
+const newConversationButton = document.querySelector("#new-conversation");
 
 function setStatus(status) {
   statusEl.textContent = status;
@@ -52,7 +56,10 @@ form.addEventListener("submit", async (event) => {
   try {
     const result = await api("/chat", {
       method: "POST",
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({
+        message: text,
+        conversation_id: state.currentConversationId,
+      }),
     });
     handleRunResult(result);
   } catch (error) {
@@ -62,6 +69,8 @@ form.addEventListener("submit", async (event) => {
 });
 
 function handleRunResult(result) {
+  state.currentConversationId = result.conversation_id;
+  state.startingNewConversation = false;
   state.currentRunId = result.run_id;
   setStatus(result.status);
   if (result.status === "waiting_for_approval") {
@@ -74,7 +83,67 @@ function handleRunResult(result) {
   renderTrace(result.trace || []);
   loadRun(result.run_id).catch((error) => console.error(error));
   refreshRuns();
+  refreshConversations();
   refreshMemory();
+}
+
+newConversationButton.addEventListener("click", () => {
+  state.currentConversationId = null;
+  state.currentRunId = null;
+  state.startingNewConversation = true;
+  conversationSelect.value = "";
+  messages.innerHTML = "";
+  setStatus("idle");
+  renderRunDetail(null);
+  renderTrace([]);
+  input.focus();
+});
+
+conversationSelect.addEventListener("change", async () => {
+  if (!conversationSelect.value) {
+    newConversationButton.click();
+    return;
+  }
+  await loadConversation(conversationSelect.value);
+});
+
+async function refreshConversations() {
+  const items = await api("/conversations");
+  conversationSelect.innerHTML = [
+    `<option value="">New conversation</option>`,
+    ...items.map(
+      (item) =>
+        `<option value="${escapeHtml(item.conversation_id)}">${escapeHtml(item.title)}</option>`
+    ),
+  ].join("");
+
+  if (state.currentConversationId) {
+    conversationSelect.value = state.currentConversationId;
+  } else if (!state.startingNewConversation && items.length) {
+    await loadConversation(items[0].conversation_id);
+  }
+}
+
+async function loadConversation(conversationId) {
+  const history = await api(`/conversations/${conversationId}/messages`);
+  state.currentConversationId = conversationId;
+  state.startingNewConversation = false;
+  conversationSelect.value = conversationId;
+  messages.innerHTML = "";
+
+  history
+    .filter((item) => item.content && ["user", "assistant"].includes(item.role))
+    .forEach((item) => addMessage(item.role, item.content));
+
+  const latestMessage = history.length ? history[history.length - 1] : null;
+  state.currentRunId = latestMessage?.run_id || null;
+  if (state.currentRunId) {
+    await loadRun(state.currentRunId);
+  } else {
+    setStatus("idle");
+    renderRunDetail(null);
+    renderTrace([]);
+  }
 }
 
 function switchTab(name) {
@@ -127,6 +196,7 @@ function renderRunDetail(detail) {
       <span class="status ${escapeHtml(detail.status)}">${escapeHtml(detail.status)}</span>
     </div>
     <div class="detail-grid">
+      <div class="label">conversation_id</div><div>${escapeHtml(detail.conversation_id || "legacy")}</div>
       <div class="label">input</div><div>${escapeHtml(detail.user_input)}</div>
       <div class="label">answer</div><div>${escapeHtml(detail.answer || "")}</div>
       <div class="label">steps</div><div>${escapeHtml(detail.steps)}</div>
@@ -238,6 +308,7 @@ async function refreshRuns() {
       <article class="row ${item.run_id === state.currentRunId ? "selected" : ""}">
         <div class="row-grid">
           <div class="label">status</div><div>${escapeHtml(item.status)}</div>
+          <div class="label">conversation</div><div>${escapeHtml(item.conversation_id || "legacy")}</div>
           <div class="label">input</div><div>${escapeHtml(item.user_input)}</div>
           <div class="label">answer</div><div>${escapeHtml(item.answer || "")}</div>
           <div class="label">steps</div><div>${escapeHtml(item.steps)}</div>
@@ -354,3 +425,4 @@ refreshMemory();
 refreshApprovals();
 renderRunDetail(null);
 renderTrace([]);
+refreshConversations();

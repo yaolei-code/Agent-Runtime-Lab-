@@ -14,7 +14,13 @@
             <h1>Personal Agent Hub v2</h1>
             <p>Agent Runtime Control Plane</p>
           </div>
-          <span id="run-status" class="status idle">idle</span>
+          <div class="conversation-controls">
+            <select id="conversation-select" aria-label="Conversation">
+              <option value="">New conversation</option>
+            </select>
+            <button id="new-conversation" type="button">New</button>
+            <span id="run-status" class="status idle">idle</span>
+          </div>
         </header>
 
         <div id="messages" class="messages"></div>

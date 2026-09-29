@@ -26,6 +26,7 @@ class AgentRunRecord(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(80), index=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     user_input: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str | None] = mapped_column(Text)

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from backend.approval.manager import ApprovalManager
 from backend.checkpoint.store import CheckpointStore
 from backend.config.settings import Settings
+from backend.conversation.store import ConversationStore
 from backend.llm.base import LLMProvider
 from backend.llm.fake import FakeRuleBasedProvider
 from backend.llm.openai_compatible import OpenAICompatibleProvider
@@ -67,6 +68,7 @@ def build_runtime(
         approval_manager=ApprovalManager(session),
         trace_store=trace_store,
         checkpoint_store=CheckpointStore(session),
+        conversation_store=ConversationStore(session, settings.conversation_history_runs),
         tool_execution_store=ToolExecutionStore(session),
         memory_retriever=SQLAlchemyMemoryRetriever(session),
         memory_extractor=MemoryExtractor(memory_store, trace_store),

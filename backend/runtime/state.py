@@ -4,6 +4,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class AgentRunResult:
+    conversation_id: str | None
     run_id: str
     status: str
     answer: str | None

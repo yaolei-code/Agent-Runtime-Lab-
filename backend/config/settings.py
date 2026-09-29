@@ -12,6 +12,7 @@ class Settings:
     llm_model: str | None
     workspace_dir: Path
     max_steps: int
+    conversation_history_runs: int = 6
 
 
 def load_settings() -> Settings:
@@ -24,4 +25,5 @@ def load_settings() -> Settings:
         llm_model=os.getenv("LLM_MODEL"),
         workspace_dir=workspace,
         max_steps=int(os.getenv("AGENT_MAX_STEPS", "8")),
+        conversation_history_runs=int(os.getenv("CONVERSATION_HISTORY_RUNS", "6")),
     )

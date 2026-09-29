@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from backend.approval.manager import ApprovalManager
 from backend.checkpoint.store import CheckpointStore
+from backend.conversation.store import ConversationStore
 from backend.llm.base import LLMProvider, LLMProviderError
 from backend.memory.extractor import MemoryExtractor
 from backend.memory.retrieval import MemoryRetriever
@@ -50,6 +51,7 @@ class AgentRuntime:
         approval_manager: ApprovalManager,
         trace_store: TraceStore,
         checkpoint_store: CheckpointStore,
+        conversation_store: ConversationStore,
         tool_execution_store: ToolExecutionStore,
         memory_retriever: MemoryRetriever,
         memory_extractor: MemoryExtractor,
@@ -70,21 +72,33 @@ class AgentRuntime:
         self.approval_manager = approval_manager
         self.trace_store = trace_store
         self.checkpoint_store = checkpoint_store
+        self.conversation_store = conversation_store
         self.tool_execution_store = tool_execution_store
         self.memory_retriever = memory_retriever
         self.memory_extractor = memory_extractor
         self.context_builder = context_builder or ContextBuilder()
         self.max_steps = max_steps
 
-    def start(self, user_message: str) -> AgentRunResult:
+    def start(
+        self,
+        user_message: str,
+        conversation_id: str | None = None,
+    ) -> AgentRunResult:
         """创建持久化 run，并进入 Agent Loop。
 
         初始 run/message/trace 会在任何 LLM 工作前提交。这样即使 provider
         失败，也会留下可检查的 run 历史。
         """
 
+        conversation = (
+            self.conversation_store.require(conversation_id)
+            if conversation_id
+            else self.conversation_store.create(user_message)
+        )
+        self.conversation_store.touch(conversation)
         run = AgentRunRecord(
             id=new_id("run"),
+            conversation_id=conversation.id,
             status=RunStatus.RUNNING.value,
             user_input=user_message,
             steps=0,
@@ -94,7 +108,7 @@ class AgentRuntime:
         self.trace_store.append(
             run.id,
             TraceEventType.RUN_STARTED.value,
-            {"user_input": user_message},
+            {"user_input": user_message, "conversation_id": conversation.id},
         )
         self._checkpoint(run, "run_started", {"user_input": user_message})
         self.session.commit()
@@ -220,7 +234,7 @@ class AgentRuntime:
             run.steps += 1
             # 每一轮都从持久化层重新加载 messages。这样跨 approval resume
             # 边界时，数据库就是上下文的事实来源。
-            messages = self._load_messages(run.id)
+            messages = self._load_context_messages(run)
             # 当前 retrieval 使用原始 user input。这样简单且可预测，
             # 但还不会根据中间 tool result 动态调整。
             memories = self.memory_retriever.retrieve(run.user_input)
@@ -494,6 +508,7 @@ class AgentRuntime:
         """构建返回给 API handler 的 runtime result。"""
 
         return AgentRunResult(
+            conversation_id=run.conversation_id,
             run_id=run.id,
             status=run.status,
             answer=run.answer,
@@ -592,6 +607,14 @@ class AgentRuntime:
             select(MessageRecord).where(MessageRecord.run_id == run_id).order_by(MessageRecord.sequence)
         ).all()
         return [record.raw or self._message_to_dict(record) for record in records]
+
+    def _load_context_messages(self, run: AgentRunRecord) -> list[dict[str, Any]]:
+        """加载当前 Run，以及同一 Conversation 中最近成功完成的历史。"""
+
+        if not run.conversation_id:
+            # 兼容 migration 前创建、尚未归属 Conversation 的历史 run。
+            return self._load_messages(run.id)
+        return self.conversation_store.context_messages(run.conversation_id, run.id)
 
     def _message_to_dict(self, record: MessageRecord) -> dict[str, Any]:
         """当 message row 没有 raw payload 时使用的兜底转换。"""

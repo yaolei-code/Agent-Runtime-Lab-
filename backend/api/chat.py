@@ -24,11 +24,13 @@ class ChatRequest(BaseModel):
     """POST /chat 的请求体。"""
 
     message: str = Field(..., min_length=1)
+    conversation_id: str | None = None
 
 
 class ChatResponse(BaseModel):
     """run 完成、失败或暂停时返回给前端的公开响应结构。"""
 
+    conversation_id: str | None = None
     run_id: str
     status: str
     answer: str | None = None
@@ -40,6 +42,7 @@ def to_response(result: AgentRunResult) -> ChatResponse:
     """把 API schema 和 runtime 内部结果对象隔离开。"""
 
     return ChatResponse(
+        conversation_id=result.conversation_id,
         run_id=result.run_id,
         status=result.status,
         answer=result.answer,
@@ -63,7 +66,9 @@ def chat(
 
     try:
         runtime = build_runtime(session, settings)
-        return to_response(runtime.start(request.message))
+        return to_response(runtime.start(request.message, request.conversation_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LLMProviderError as exc:
         # 请求本身合法，但当前配置的模型 provider 无法使用。
         raise HTTPException(status_code=500, detail=str(exc)) from exc
